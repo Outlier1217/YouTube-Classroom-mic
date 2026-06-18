@@ -1,0 +1,39 @@
+{
+  "name": "classroom-mic",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "next build",
+    "start": "NODE_ENV=production tsx server.ts",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@auth/prisma-adapter": "^2.11.2",
+    "@prisma/adapter-pg": "latest",
+    "@prisma/client": "^7.8.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "next": "16.2.9",
+    "next-auth": "^4.24.14",
+    "pg": "latest",
+    "prisma": "^7.8.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.1",
+    "@types/bcryptjs": "^3.0.0",
+    "@types/node": "^20.19.43",
+    "@types/pg": "latest",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4.3.1",
+    "tsx": "latest",
+    "typescript": "^5.9.3"
+  }
+}
