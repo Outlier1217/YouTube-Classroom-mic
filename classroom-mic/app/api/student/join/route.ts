@@ -7,10 +7,10 @@ function generateRollNumber(): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { token, name } = await req.json();
+  const { token, name, browserId } = await req.json();
 
-  if (!token || !name) {
-    return NextResponse.json({ error: "Token and name required" }, { status: 400 });
+  if (!token || !name || !browserId) {
+    return NextResponse.json({ error: "Token, name and browserId required" }, { status: 400 });
   }
 
   const room = await prisma.room.findUnique({ where: { token } });
@@ -18,10 +18,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid token" }, { status: 404 });
   }
 
+  // Check if this browser already joined this room
+  const existing = await prisma.student.findFirst({
+    where: { roomId: room.id, browserId },
+  });
+
+  if (existing) {
+    return NextResponse.json({ 
+      success: true, 
+      student: existing, 
+      roomName: room.name,
+      alreadyJoined: true 
+    });
+  }
+
   const rollNumber = generateRollNumber();
 
   const student = await prisma.student.create({
-    data: { name, rollNumber, roomId: room.id },
+    data: { name, rollNumber, roomId: room.id, browserId },
   });
 
   return NextResponse.json({ success: true, student, roomName: room.name });

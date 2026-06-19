@@ -2,25 +2,65 @@
 import { useState, useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 
+function getBrowserId(): string {
+  let id = localStorage.getItem("classroom_browser_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("classroom_browser_id", id);
+  }
+  return id;
+}
+
+function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
+  }
+  // Fallback for non-HTTPS
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.style.position = "fixed";
+  el.style.opacity = "0";
+  document.body.appendChild(el);
+  el.focus();
+  el.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(el);
+  return Promise.resolve(ok);
+}
+
 export default function StudentPage() {
   const [step, setStep] = useState<"enter" | "joined">("enter");
   const [token, setToken] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [studentData, setStudentData] = useState<{ name: string; rollNumber: string; roomName: string } | null>(null);
+  const [studentData, setStudentData] = useState<{ id: string; name: string; rollNumber: string; roomName: string } | null>(null);
+
+  // Auto-restore if already joined this room
+  useEffect(() => {
+    const saved = localStorage.getItem("classroom_student");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setStudentData(parsed.studentData);
+      setToken(parsed.token);
+      setStep("joined");
+    }
+  }, []);
 
   const join = async () => {
     if (!token.trim() || !name.trim()) { setError("Token and name both required"); return; }
     setLoading(true); setError("");
+    const browserId = getBrowserId();
     const res = await fetch("/api/student/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, name }),
+      body: JSON.stringify({ token, name, browserId }),
     });
     const data = await res.json();
     if (!res.ok) { setError(data.error); setLoading(false); return; }
-    setStudentData({ name: data.student.name, rollNumber: data.student.rollNumber, roomName: data.roomName });
+    const sd = { id: data.student.id, name: data.student.name, rollNumber: data.student.rollNumber, roomName: data.roomName };
+    setStudentData(sd);
+    localStorage.setItem("classroom_student", JSON.stringify({ studentData: sd, token }));
     setStep("joined");
     setLoading(false);
   };
@@ -44,8 +84,9 @@ export default function StudentPage() {
   );
 }
 
-function StudentMicView({ studentData, token }: { studentData: { name: string; rollNumber: string; roomName: string }; token: string }) {
+function StudentMicView({ studentData, token }: { studentData: { id: string; name: string; rollNumber: string; roomName: string }; token: string }) {
   const [micStatus, setMicStatus] = useState<"off" | "on">("off");
+  const [copied, setCopied] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -53,19 +94,12 @@ function StudentMicView({ studentData, token }: { studentData: { name: string; r
   useEffect(() => {
     const socket = io({ path: "/socket.io" });
     socketRef.current = socket;
-
     socket.emit("student-join", { roomToken: token, rollNumber: studentData.rollNumber });
 
     socket.on("mic-control", async (data: { rollNumber: string; micOn: boolean }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-
-      if (data.micOn) {
-        await startMic(socket);
-        setMicStatus("on");
-      } else {
-        stopMic();
-        setMicStatus("off");
-      }
+      if (data.micOn) { await startMic(socket); setMicStatus("on"); }
+      else { stopMic(); setMicStatus("off"); }
     });
 
     socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit }) => {
@@ -83,31 +117,31 @@ function StudentMicView({ studentData, token }: { studentData: { name: string; r
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-
       const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
       peerRef.current = peer;
-
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
       peer.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit("webrtc-ice", { candidate: e.candidate, roomToken: token });
-        }
+        if (e.candidate) socket.emit("webrtc-ice", { candidate: e.candidate, roomToken: token });
       };
-
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       socket.emit("webrtc-offer", { offer, rollNumber: studentData.rollNumber, roomToken: token });
-    } catch (err) {
-      console.error("Mic error:", err);
-    }
+    } catch (err) { console.error("Mic error:", err); }
   };
 
   const stopMic = () => {
-    peerRef.current?.close();
-    peerRef.current = null;
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
+    peerRef.current?.close(); peerRef.current = null;
+    streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null;
+  };
+
+  const handleCopy = async () => {
+    const ok = await copyToClipboard(studentData.rollNumber);
+    if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
+  };
+
+  const handleLeave = () => {
+    localStorage.removeItem("classroom_student");
+    window.location.reload();
   };
 
   return (
@@ -120,8 +154,8 @@ function StudentMicView({ studentData, token }: { studentData: { name: string; r
           <p className="text-green-400 text-3xl font-mono font-bold">{studentData.rollNumber}</p>
         </div>
         <p className="text-yellow-400 text-sm">📋 Copy this roll number and paste it in YouTube live chat to raise a doubt</p>
-        <button onClick={() => navigator.clipboard.writeText(studentData.rollNumber)} className="mt-4 bg-gray-700 hover:bg-gray-600 text-white px-6 py-2 rounded-lg text-sm transition">
-          Copy Roll Number
+        <button onClick={handleCopy} className="mt-4 bg-green-700 hover:bg-green-600 text-white px-6 py-2 rounded-lg text-sm transition font-semibold">
+          {copied ? "✅ Copied!" : "📋 Copy Roll Number"}
         </button>
         <div className="mt-6 bg-gray-800 rounded-xl p-4">
           <p className="text-gray-400 text-sm">🎙️ Mic Status</p>
@@ -131,6 +165,9 @@ function StudentMicView({ studentData, token }: { studentData: { name: string; r
           }
           <p className="text-gray-500 text-xs mt-2">Keep this tab open in background while watching YouTube</p>
         </div>
+        <button onClick={handleLeave} className="mt-4 text-gray-500 hover:text-red-400 text-xs transition">
+          Leave class & join with different name
+        </button>
       </div>
     </main>
   );
