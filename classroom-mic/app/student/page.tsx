@@ -81,68 +81,105 @@ function StudentMicView({ studentData, token }: {
 }) {
   const [micStatus, setMicStatus] = useState<"off" | "on">("off");
   const [copied, setCopied] = useState(false);
+  const [micReady, setMicReady] = useState(false);
+  const [micError, setMicError] = useState("");
+
   const socketRef = useRef<Socket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
+  // Single persistent stream — acquired once, never stopped
   const streamRef = useRef<MediaStream | null>(null);
-  // Track mic should be on — so reconnect knows to re-offer
   const micShouldBeOnRef = useRef(false);
 
-  const stopMic = () => {
-    peerRef.current?.close();
-    peerRef.current = null;
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
+  // Step 1: Acquire mic stream immediately on component mount
+  // This MUST happen while tab is visible (user just joined)
+  useEffect(() => {
+    const initMic = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        streamRef.current = stream;
+        // Start with all tracks disabled (muted)
+        stream.getAudioTracks().forEach(track => { track.enabled = false; });
+        setMicReady(true);
+        console.log("Mic stream acquired and ready");
+      } catch (err) {
+        console.error("Mic permission denied:", err);
+        setMicError("Mic access denied. Please allow microphone and refresh.");
+      }
+    };
+    initMic();
+
+    return () => {
+      // Only stop stream on actual unmount (leave class)
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  // Step 2: Setup WebRTC peer connection once mic is ready
+  const setupPeer = (socket: Socket) => {
+    if (!streamRef.current) return;
+
+    // Close existing peer
+    if (peerRef.current) {
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ]
+    });
+    peerRef.current = peer;
+
+    // Add all tracks from persistent stream
+    streamRef.current.getTracks().forEach(track => {
+      peer.addTrack(track, streamRef.current!);
+    });
+
+    peer.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit("webrtc-ice", {
+          candidate: e.candidate,
+          roomToken: token,
+          rollNumber: studentData.rollNumber,
+          from: "student",
+        });
+      }
+    };
+
+    peer.onconnectionstatechange = () => {
+      console.log("Peer state:", peer.connectionState);
+      if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+        // Re-setup peer after short delay
+        setTimeout(() => {
+          if (socketRef.current?.connected) setupPeer(socketRef.current);
+        }, 2000);
+      }
+    };
+
+    return peer;
   };
 
-  const startMic = async (socket: Socket) => {
+  const sendOffer = async (socket: Socket) => {
+    const peer = setupPeer(socket);
+    if (!peer) return;
     try {
-      stopMic(); // cleanup previous connection first
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      streamRef.current = stream;
-
-      const peer = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ]
-      });
-      peerRef.current = peer;
-
-      stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-      peer.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit("webrtc-ice", {
-            candidate: e.candidate,
-            roomToken: token,
-            rollNumber: studentData.rollNumber,
-            from: "student",
-          });
-        }
-      };
-
-      peer.onconnectionstatechange = () => {
-        console.log("Peer state:", peer.connectionState);
-        // If connection drops while mic should be on, re-offer
-        if (
-          (peer.connectionState === "disconnected" || peer.connectionState === "failed") &&
-          micShouldBeOnRef.current
-        ) {
-          console.log("Connection dropped, re-offering...");
-          setTimeout(() => { if (micShouldBeOnRef.current) startMic(socket); }, 1500);
-        }
-      };
-
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      socket.emit("webrtc-offer", { offer, rollNumber: studentData.rollNumber, roomToken: token });
+      socket.emit("webrtc-offer", {
+        offer,
+        rollNumber: studentData.rollNumber,
+        roomToken: token,
+      });
       console.log("Offer sent");
     } catch (err) {
-      console.error("Mic error:", err);
+      console.error("Offer error:", err);
     }
   };
 
+  // Step 3: Socket setup
   useEffect(() => {
     const socket = io({
       path: "/socket.io",
@@ -152,15 +189,12 @@ function StudentMicView({ studentData, token }: {
     });
     socketRef.current = socket;
 
-    // On every connect/reconnect — rejoin room
-    // If mic was supposed to be on, re-send offer automatically
     socket.on("connect", () => {
-      console.log("Socket connected, rejoining room");
+      console.log("Socket connected");
       socket.emit("student-join", { roomToken: token, rollNumber: studentData.rollNumber });
-
-      if (micShouldBeOnRef.current) {
-        console.log("Mic was on, re-offering after reconnect");
-        setTimeout(() => startMic(socket), 500);
+      // Re-send offer on reconnect if mic should be on
+      if (micShouldBeOnRef.current && streamRef.current) {
+        setTimeout(() => sendOffer(socket), 500);
       }
     });
 
@@ -168,20 +202,24 @@ function StudentMicView({ studentData, token }: {
 
     socket.on("mic-control", async (data: { rollNumber: string; micOn: boolean }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-      console.log("mic-control received:", data.micOn);
+      console.log("mic-control:", data.micOn);
       micShouldBeOnRef.current = data.micOn;
+
       if (data.micOn) {
-        await startMic(socket);
+        // Just enable the track — no getUserMedia needed again!
+        streamRef.current?.getAudioTracks().forEach(track => { track.enabled = true; });
         setMicStatus("on");
+        // Send fresh offer so teacher gets the audio
+        await sendOffer(socket);
       } else {
-        stopMic();
+        // Just disable the track — stream stays alive
+        streamRef.current?.getAudioTracks().forEach(track => { track.enabled = false; });
         setMicStatus("off");
       }
     });
 
     socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; rollNumber: string }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-      console.log("Got answer");
       peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(console.error);
     });
 
@@ -191,25 +229,9 @@ function StudentMicView({ studentData, token }: {
       }
     });
 
-    // Tab visibility change — when student comes back to this tab
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        console.log("Tab visible again");
-        if (!socket.connected) {
-          socket.connect();
-        } else if (micShouldBeOnRef.current) {
-          // Tab came back, mic should be on — re-establish WebRTC
-          console.log("Tab back, re-offering mic");
-          startMic(socket);
-        }
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-
     return () => {
       socket.disconnect();
-      stopMic();
-      document.removeEventListener("visibilitychange", handleVisibility);
+      peerRef.current?.close();
     };
   }, [token, studentData.rollNumber]);
 
@@ -239,22 +261,37 @@ function StudentMicView({ studentData, token }: {
           {copied ? "✅ Copied!" : "📋 Copy Roll Number"}
         </button>
 
+        {/* Mic status */}
         <div className="mt-6 bg-gray-800 rounded-xl p-4">
           <p className="text-gray-400 text-sm">🎙️ Mic Status</p>
-          {micStatus === "off"
-            ? <p className="text-red-400 font-semibold mt-1">🔇 Muted — Teacher will unmute when needed</p>
-            : <p className="text-green-400 font-semibold mt-1 animate-pulse">🎙️ Live — Teacher can hear you</p>
-          }
+          {micError ? (
+            <p className="text-red-400 font-semibold mt-1 text-sm">{micError}</p>
+          ) : !micReady ? (
+            <p className="text-yellow-400 font-semibold mt-1">⏳ Activating mic...</p>
+          ) : micStatus === "off" ? (
+            <p className="text-red-400 font-semibold mt-1">🔇 Muted — Teacher will unmute when needed</p>
+          ) : (
+            <p className="text-green-400 font-semibold mt-1 animate-pulse">🎙️ Live — Teacher can hear you</p>
+          )}
           <p className="text-gray-500 text-xs mt-2">Keep this tab open in background while watching YouTube</p>
         </div>
+
+        {/* Mic ready indicator */}
+        {micReady && (
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+            <span className="text-green-500 text-xs">Mic ready — you can switch tabs freely</span>
+          </div>
+        )}
 
         <div className="mt-4 bg-blue-900/30 border border-blue-700/50 rounded-xl p-3 text-left">
           <p className="text-blue-400 text-xs font-semibold mb-1">💡 How to use</p>
           <p className="text-blue-200/70 text-xs">
-            1. Open YouTube in <strong>another tab</strong> in this browser<br />
-            2. Keep this tab open in background<br />
-            3. When teacher unmutes you, <strong>speak normally</strong> — mic reconnects automatically<br />
-            4. You don't need to come back to this tab
+            1. Allow mic permission (done once) ✅<br />
+            2. Open YouTube in <strong>another tab</strong><br />
+            3. Raise doubt in YouTube chat with your roll number<br />
+            4. Teacher will unmute you — <strong>speak from any tab</strong><br />
+            5. No need to come back here
           </p>
         </div>
 
