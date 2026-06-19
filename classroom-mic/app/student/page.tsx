@@ -26,7 +26,9 @@ export default function StudentPage() {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [studentData, setStudentData] = useState<{ id: string; name: string; rollNumber: string; roomName: string } | null>(null);
+  const [studentData, setStudentData] = useState<{
+    id: string; name: string; rollNumber: string; roomName: string
+  } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem("classroom_student");
@@ -77,63 +79,57 @@ export default function StudentPage() {
 
 function StudentMicView({ studentData, token }: {
   studentData: { id: string; name: string; rollNumber: string; roomName: string };
-  token: string
+  token: string;
 }) {
   const [micStatus, setMicStatus] = useState<"off" | "on">("off");
   const [copied, setCopied] = useState(false);
-  const [micReady, setMicReady] = useState(false);
-  const [micError, setMicError] = useState("");
+  const [connStatus, setConnStatus] = useState<"connecting" | "ready" | "error">("connecting");
 
   const socketRef = useRef<Socket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
-  // Single persistent stream — acquired once, never stopped
   const streamRef = useRef<MediaStream | null>(null);
-  const micShouldBeOnRef = useRef(false);
+  const micOnRef = useRef(false);
 
-  // Step 1: Acquire mic stream immediately on component mount
-  // This MUST happen while tab is visible (user just joined)
+  // Acquire mic once — while tab is visible
   useEffect(() => {
-    const initMic = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      .then(stream => {
         streamRef.current = stream;
-        // Start with all tracks disabled (muted)
-        stream.getAudioTracks().forEach(track => { track.enabled = false; });
-        setMicReady(true);
-        console.log("Mic stream acquired and ready");
-      } catch (err) {
-        console.error("Mic permission denied:", err);
-        setMicError("Mic access denied. Please allow microphone and refresh.");
-      }
-    };
-    initMic();
+        // Start muted
+        stream.getAudioTracks().forEach(t => { t.enabled = false; });
+        setConnStatus("ready");
+        console.log("Mic acquired");
+      })
+      .catch(err => {
+        console.error("Mic error:", err);
+        setConnStatus("error");
+      });
 
     return () => {
-      // Only stop stream on actual unmount (leave class)
       streamRef.current?.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
     };
   }, []);
 
-  // Step 2: Setup WebRTC peer connection once mic is ready
-  const setupPeer = (socket: Socket) => {
-    if (!streamRef.current) return;
+  const createPeerAndOffer = async (socket: Socket) => {
+    if (!streamRef.current) { console.log("No stream yet"); return; }
 
-    // Close existing peer
+    // Close old peer
     if (peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
     }
 
+    console.log("Creating peer connection...");
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
       ]
     });
     peerRef.current = peer;
 
-    // Add all tracks from persistent stream
+    // Add muted track
     streamRef.current.getTracks().forEach(track => {
       peer.addTrack(track, streamRef.current!);
     });
@@ -150,21 +146,13 @@ function StudentMicView({ studentData, token }: {
     };
 
     peer.onconnectionstatechange = () => {
-      console.log("Peer state:", peer.connectionState);
-      if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
-        // Re-setup peer after short delay
-        setTimeout(() => {
-          if (socketRef.current?.connected) setupPeer(socketRef.current);
-        }, 2000);
+      console.log("Peer:", peer.connectionState);
+      if (peer.connectionState === "failed") {
+        // Retry after 3 seconds
+        setTimeout(() => createPeerAndOffer(socket), 3000);
       }
     };
 
-    return peer;
-  };
-
-  const sendOffer = async (socket: Socket) => {
-    const peer = setupPeer(socket);
-    if (!peer) return;
     try {
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
@@ -173,13 +161,12 @@ function StudentMicView({ studentData, token }: {
         rollNumber: studentData.rollNumber,
         roomToken: token,
       });
-      console.log("Offer sent");
+      console.log("Offer sent to teacher");
     } catch (err) {
-      console.error("Offer error:", err);
+      console.error("Offer failed:", err);
     }
   };
 
-  // Step 3: Socket setup
   useEffect(() => {
     const socket = io({
       path: "/socket.io",
@@ -192,40 +179,39 @@ function StudentMicView({ studentData, token }: {
     socket.on("connect", () => {
       console.log("Socket connected");
       socket.emit("student-join", { roomToken: token, rollNumber: studentData.rollNumber });
-      // Re-send offer on reconnect if mic should be on
-      if (micShouldBeOnRef.current && streamRef.current) {
-        setTimeout(() => sendOffer(socket), 500);
-      }
     });
 
-    socket.emit("student-join", { roomToken: token, rollNumber: studentData.rollNumber });
+    // Server tells student to initiate WebRTC (teacher is ready)
+    socket.on("initiate-connection", () => {
+      console.log("Teacher ready — initiating WebRTC");
+      createPeerAndOffer(socket);
+    });
 
-    socket.on("mic-control", async (data: { rollNumber: string; micOn: boolean }) => {
+    // Teacher toggles mic — ONLY track enable/disable, no new offer
+    socket.on("mic-control", (data: { rollNumber: string; micOn: boolean }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-      console.log("mic-control:", data.micOn);
-      micShouldBeOnRef.current = data.micOn;
+      console.log("Mic control:", data.micOn);
+      micOnRef.current = data.micOn;
 
-      if (data.micOn) {
-        // Just enable the track — no getUserMedia needed again!
-        streamRef.current?.getAudioTracks().forEach(track => { track.enabled = true; });
-        setMicStatus("on");
-        // Send fresh offer so teacher gets the audio
-        await sendOffer(socket);
-      } else {
-        // Just disable the track — stream stays alive
-        streamRef.current?.getAudioTracks().forEach(track => { track.enabled = false; });
-        setMicStatus("off");
+      if (streamRef.current) {
+        streamRef.current.getAudioTracks().forEach(t => {
+          t.enabled = data.micOn;
+        });
       }
+      setMicStatus(data.micOn ? "on" : "off");
     });
 
     socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; rollNumber: string }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-      peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(console.error);
+      console.log("Got answer from teacher");
+      peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer))
+        .catch(console.error);
     });
 
     socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit; from: string }) => {
       if (data.from === "teacher") {
-        peerRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(console.error);
+        peerRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate))
+          .catch(console.error);
       }
     });
 
@@ -261,13 +247,12 @@ function StudentMicView({ studentData, token }: {
           {copied ? "✅ Copied!" : "📋 Copy Roll Number"}
         </button>
 
-        {/* Mic status */}
         <div className="mt-6 bg-gray-800 rounded-xl p-4">
           <p className="text-gray-400 text-sm">🎙️ Mic Status</p>
-          {micError ? (
-            <p className="text-red-400 font-semibold mt-1 text-sm">{micError}</p>
-          ) : !micReady ? (
-            <p className="text-yellow-400 font-semibold mt-1">⏳ Activating mic...</p>
+          {connStatus === "error" ? (
+            <p className="text-red-400 font-semibold mt-1">❌ Mic access denied — please refresh and allow</p>
+          ) : connStatus === "connecting" ? (
+            <p className="text-yellow-400 font-semibold mt-1">⏳ Setting up mic...</p>
           ) : micStatus === "off" ? (
             <p className="text-red-400 font-semibold mt-1">🔇 Muted — Teacher will unmute when needed</p>
           ) : (
@@ -276,22 +261,20 @@ function StudentMicView({ studentData, token }: {
           <p className="text-gray-500 text-xs mt-2">Keep this tab open in background while watching YouTube</p>
         </div>
 
-        {/* Mic ready indicator */}
-        {micReady && (
+        {connStatus === "ready" && (
           <div className="mt-3 flex items-center justify-center gap-2">
-            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <span className="text-green-500 text-xs">Mic ready — you can switch tabs freely</span>
+            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+            <span className="text-green-500 text-xs">Mic ready — switch tabs freely</span>
           </div>
         )}
 
         <div className="mt-4 bg-blue-900/30 border border-blue-700/50 rounded-xl p-3 text-left">
           <p className="text-blue-400 text-xs font-semibold mb-1">💡 How to use</p>
           <p className="text-blue-200/70 text-xs">
-            1. Allow mic permission (done once) ✅<br />
+            1. Allow mic permission ✅<br />
             2. Open YouTube in <strong>another tab</strong><br />
-            3. Raise doubt in YouTube chat with your roll number<br />
-            4. Teacher will unmute you — <strong>speak from any tab</strong><br />
-            5. No need to come back here
+            3. Raise doubt with your roll number in chat<br />
+            4. Speak when teacher unmutes — <strong>no tab switching needed</strong>
           </p>
         </div>
 
