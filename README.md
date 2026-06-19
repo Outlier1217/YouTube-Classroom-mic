@@ -209,7 +209,7 @@ pnpm approve-builds
 ### 5. Run the development server
 
 ```bash
-pnpm dev --hostname 0.0.0.0
+pnpm dev
 ```
 
 App runs at `http://localhost:3000`
@@ -315,7 +315,7 @@ server {
 
 **Mustak Aalam**
 - GitHub: [@Outlier1217](https://github.com/Outlier1217)
-- YouTube: [@Outlier1217](https://youtube.com/@Outlier1217)
+- YouTube: [@Outlier1217](https://youtube.com/@Outlier-lab)
 
 ---
 
