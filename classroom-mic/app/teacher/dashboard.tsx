@@ -43,7 +43,7 @@ export default function TeacherDashboard() {
       Object.values(peersRef.current).forEach(peer => peer.addIceCandidate(new RTCIceCandidate(data.candidate)));
     });
 
-    return () => socket.disconnect();
+    return () => { socket.disconnect(); };
   }, []);
 
   useEffect(() => {
@@ -117,7 +117,6 @@ export default function TeacherDashboard() {
           <button onClick={() => signOut()} className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-sm transition">Logout</button>
         </div>
 
-        {/* Create Room */}
         <div className="bg-gray-900 rounded-2xl p-6 mb-6">
           <h2 className="text-xl font-semibold mb-4">Create New Room</h2>
           <div className="flex gap-3">
@@ -126,7 +125,6 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        {/* Rooms List */}
         <div className="grid gap-4 mb-6">
           {rooms.map(room => (
             <div key={room.id} className={`bg-gray-900 rounded-2xl p-5 border-2 transition ${activeRoom?.id === room.id ? "border-blue-500" : "border-transparent hover:border-gray-700"}`}>
@@ -157,7 +155,6 @@ export default function TeacherDashboard() {
           {rooms.length === 0 && <p className="text-gray-500 text-center py-8">No rooms yet. Create one above.</p>}
         </div>
 
-        {/* Active Room */}
         {activeRoom && (
           <div className="bg-gray-900 rounded-2xl p-6">
             <h2 className="text-xl font-semibold mb-4">🔍 Search Student in: {activeRoom.name}</h2>
