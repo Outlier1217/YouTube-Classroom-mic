@@ -4,10 +4,7 @@ import { io, Socket } from "socket.io-client";
 
 function getBrowserId(): string {
   let id = localStorage.getItem("classroom_browser_id");
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem("classroom_browser_id", id);
-  }
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem("classroom_browser_id", id); }
   return id;
 }
 
@@ -15,14 +12,9 @@ function copyToClipboard(text: string): Promise<boolean> {
   if (navigator.clipboard && window.isSecureContext) {
     return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
   }
-  // Fallback for non-HTTPS
   const el = document.createElement("textarea");
-  el.value = text;
-  el.style.position = "fixed";
-  el.style.opacity = "0";
-  document.body.appendChild(el);
-  el.focus();
-  el.select();
+  el.value = text; el.style.position = "fixed"; el.style.opacity = "0";
+  document.body.appendChild(el); el.focus(); el.select();
   const ok = document.execCommand("copy");
   document.body.removeChild(el);
   return Promise.resolve(ok);
@@ -36,7 +28,6 @@ export default function StudentPage() {
   const [loading, setLoading] = useState(false);
   const [studentData, setStudentData] = useState<{ id: string; name: string; rollNumber: string; roomName: string } | null>(null);
 
-  // Auto-restore if already joined this room
   useEffect(() => {
     const saved = localStorage.getItem("classroom_student");
     if (saved) {
@@ -98,16 +89,21 @@ function StudentMicView({ studentData, token }: { studentData: { id: string; nam
 
     socket.on("mic-control", async (data: { rollNumber: string; micOn: boolean }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
+      console.log("Mic control received:", data.micOn);
       if (data.micOn) { await startMic(socket); setMicStatus("on"); }
       else { stopMic(); setMicStatus("off"); }
     });
 
-    socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit }) => {
-      peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+    socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; rollNumber: string }) => {
+      if (data.rollNumber !== studentData.rollNumber) return;
+      console.log("Got answer");
+      peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(console.error);
     });
 
-    socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit }) => {
-      peerRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate));
+    socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit; from: string }) => {
+      if (data.from === "teacher") {
+        peerRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(console.error);
+      }
     });
 
     return () => { socket.disconnect(); stopMic(); };
@@ -115,17 +111,31 @@ function StudentMicView({ studentData, token }: { studentData: { id: string; nam
 
   const startMic = async (socket: Socket) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       streamRef.current = stream;
-      const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ]
+      });
       peerRef.current = peer;
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
       peer.onicecandidate = (e) => {
-        if (e.candidate) socket.emit("webrtc-ice", { candidate: e.candidate, roomToken: token });
+        if (e.candidate) {
+          socket.emit("webrtc-ice", {
+            candidate: e.candidate,
+            roomToken: token,
+            rollNumber: studentData.rollNumber,
+            from: "student",
+          });
+        }
       };
+      peer.onconnectionstatechange = () => console.log("Student peer state:", peer.connectionState);
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       socket.emit("webrtc-offer", { offer, rollNumber: studentData.rollNumber, roomToken: token });
+      console.log("Offer sent");
     } catch (err) { console.error("Mic error:", err); }
   };
 

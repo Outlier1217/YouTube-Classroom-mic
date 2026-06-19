@@ -17,37 +17,77 @@ export default function TeacherDashboard() {
   const [editingRoom, setEditingRoom] = useState<{ id: string; name: string } | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
   useEffect(() => {
     const socket = io({ path: "/socket.io" });
     socketRef.current = socket;
 
     socket.on("webrtc-offer", async (data: { offer: RTCSessionDescriptionInit; rollNumber: string; roomToken: string }) => {
-      const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+      console.log("Received offer from:", data.rollNumber);
+
+      // Close existing peer for this student if any
+      if (peersRef.current[data.rollNumber]) {
+        peersRef.current[data.rollNumber].close();
+      }
+
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ]
+      });
       peersRef.current[data.rollNumber] = peer;
+
       peer.onicecandidate = (e) => {
-        if (e.candidate) socket.emit("webrtc-ice", { candidate: e.candidate, roomToken: data.roomToken });
+        if (e.candidate) {
+          socket.emit("webrtc-ice", {
+            candidate: e.candidate,
+            roomToken: data.roomToken,
+            rollNumber: data.rollNumber,
+            from: "teacher",
+          });
+        }
       };
+
       peer.ontrack = (e) => {
-        if (!audioRef.current) { audioRef.current = new Audio(); audioRef.current.autoplay = true; }
-        audioRef.current.srcObject = e.streams[0];
+        console.log("Got audio track from:", data.rollNumber);
+        const audio = new Audio();
+        audio.srcObject = e.streams[0];
+        audio.autoplay = true;
+        audioRefs.current[data.rollNumber] = audio;
+        audio.play().catch(console.error);
       };
+
+      peer.onconnectionstatechange = () => {
+        console.log(`Peer ${data.rollNumber} state:`, peer.connectionState);
+      };
+
       await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
-      socket.emit("webrtc-answer", { answer, roomToken: data.roomToken });
+
+      socket.emit("webrtc-answer", {
+        answer,
+        roomToken: data.roomToken,
+        rollNumber: data.rollNumber,
+      });
     });
 
-    socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit }) => {
-      Object.values(peersRef.current).forEach(peer => peer.addIceCandidate(new RTCIceCandidate(data.candidate)));
+    socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit; rollNumber: string }) => {
+      const peer = peersRef.current[data.rollNumber];
+      if (peer && data.candidate) {
+        peer.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(console.error);
+      }
     });
 
     return () => { socket.disconnect(); };
   }, []);
 
   useEffect(() => {
-    if (activeRoom && socketRef.current) socketRef.current.emit("teacher-join", activeRoom.token);
+    if (activeRoom && socketRef.current) {
+      socketRef.current.emit("teacher-join", activeRoom.token);
+    }
   }, [activeRoom]);
 
   const fetchRooms = async () => {

@@ -17,16 +17,18 @@ app.prepare().then(() => {
     cors: { origin: "*", methods: ["GET", "POST"] },
   });
 
+  // Track teacher socket per room
+  const teacherSockets = new Map<string, string>(); // roomToken -> socketId
+
   io.on("connection", (socket) => {
     console.log("Connected:", socket.id);
 
-    // Teacher joins room
     socket.on("teacher-join", (roomToken: string) => {
       socket.join(`room:${roomToken}`);
-      console.log(`Teacher joined room:${roomToken}`);
+      teacherSockets.set(roomToken, socket.id);
+      console.log(`Teacher ${socket.id} joined room:${roomToken}`);
     });
 
-    // Student joins room
     socket.on("student-join", (data: { roomToken: string; rollNumber: string }) => {
       socket.join(`room:${data.roomToken}`);
       socket.data.rollNumber = data.rollNumber;
@@ -34,28 +36,47 @@ app.prepare().then(() => {
       console.log(`Student ${data.rollNumber} joined room:${data.roomToken}`);
     });
 
-    // Teacher toggles student mic
     socket.on("toggle-mic", (data: { roomToken: string; rollNumber: string; micOn: boolean }) => {
+      console.log(`Mic toggle: ${data.rollNumber} -> ${data.micOn}`);
       io.to(`room:${data.roomToken}`).emit("mic-control", {
         rollNumber: data.rollNumber,
         micOn: data.micOn,
       });
     });
 
-    // WebRTC Signaling
+    // Student sends offer -> forward to teacher only
     socket.on("webrtc-offer", (data: { offer: RTCSessionDescriptionInit; rollNumber: string; roomToken: string }) => {
-      socket.to(`room:${data.roomToken}`).emit("webrtc-offer", data);
+      console.log(`WebRTC offer from ${data.rollNumber}`);
+      const teacherSocketId = teacherSockets.get(data.roomToken);
+      if (teacherSocketId) {
+        io.to(teacherSocketId).emit("webrtc-offer", data);
+      }
     });
 
-    socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; roomToken: string }) => {
-      socket.to(`room:${data.roomToken}`).emit("webrtc-answer", data);
+    // Teacher sends answer -> forward to that student only
+    socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; roomToken: string; rollNumber: string }) => {
+      console.log(`WebRTC answer for ${data.rollNumber}`);
+      io.to(`room:${data.roomToken}`).emit("webrtc-answer", {
+        answer: data.answer,
+        rollNumber: data.rollNumber,
+      });
     });
 
-    socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit; roomToken: string }) => {
-      socket.to(`room:${data.roomToken}`).emit("webrtc-ice", data);
+    // ICE candidates
+    socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit; roomToken: string; rollNumber: string; from: string }) => {
+      if (data.from === "student") {
+        const teacherSocketId = teacherSockets.get(data.roomToken);
+        if (teacherSocketId) io.to(teacherSocketId).emit("webrtc-ice", data);
+      } else {
+        io.to(`room:${data.roomToken}`).emit("webrtc-ice", data);
+      }
     });
 
     socket.on("disconnect", () => {
+      // Clean up teacher socket tracking
+      teacherSockets.forEach((socketId, token) => {
+        if (socketId === socket.id) teacherSockets.delete(token);
+      });
       console.log("Disconnected:", socket.id);
     });
   });
