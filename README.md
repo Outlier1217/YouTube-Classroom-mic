@@ -315,7 +315,7 @@ server {
 
 **Mustak Aalam**
 - GitHub: [@Outlier1217](https://github.com/Outlier1217)
-- YouTube: [@Outlier1217](https://youtube.com/@Outlier-lab)
+- YouTube: [@Outlier-lab](https://youtube.com/@Outlier-lab)
 
 ---
 
