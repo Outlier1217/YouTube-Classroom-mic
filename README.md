@@ -33,6 +33,16 @@ Next.js Teacher Dashboard                Next.js Student Page
                               │
                          WebRTC Audio
                     (student mic → teacher)
+
+Admin Browser
+─────────────
+Next.js Admin Panel (/admin)
+  ├── Login (env-based credentials)
+  ├── Dashboard — stats overview
+  ├── Teachers — view / delete
+  ├── Rooms — view / delete
+  ├── Students — search / delete
+  └── Live Monitor — real-time connected users (auto-refresh 5s)
 ```
 
 ---
@@ -44,7 +54,8 @@ Next.js Teacher Dashboard                Next.js Student Page
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS v4 |
-| Auth | NextAuth v4 (Credentials Provider) |
+| Auth (Teacher) | NextAuth v4 (Credentials Provider) |
+| Auth (Admin) | HTTP-only cookie (env credentials) |
 | Database | PostgreSQL via Neon (serverless) |
 | ORM | Prisma v7 |
 | Real-time | Socket.io v4 |
@@ -63,20 +74,30 @@ classroom-mic/
 │   │   ├── auth/[...nextauth]/route.ts   # NextAuth credentials handler
 │   │   ├── teacher/register/route.ts     # Teacher registration API
 │   │   ├── rooms/route.ts                # Create & fetch rooms
-│   │   └── student/
-│   │       ├── join/route.ts             # Student join + roll number assign
-│   │       └── search/route.ts           # Search student by roll number
+│   │   ├── student/
+│   │   │   ├── join/route.ts             # Student join + roll number assign
+│   │   │   └── search/route.ts           # Search student by roll number
+│   │   └── admin/
+│   │       ├── login/route.ts            # Admin login → sets cookie
+│   │       ├── logout/route.ts           # Admin logout → clears cookie
+│   │       ├── data/route.ts             # CRUD: teachers, rooms, students
+│   │       └── live/route.ts             # Live monitor: connected sockets
 │   ├── teacher/
 │   │   ├── page.tsx                      # Login / Register page
 │   │   └── dashboard.tsx                 # Teacher dashboard + mic control
 │   ├── student/
 │   │   └── page.tsx                      # Student join + mic view
+│   ├── admin/
+│   │   ├── page.tsx                      # Admin login page
+│   │   └── dashboard/
+│   │       └── page.tsx                  # Admin dashboard (CRUD + live monitor)
 │   ├── generated/prisma/                 # Prisma generated client
 │   ├── providers.tsx                     # NextAuth SessionProvider wrapper
 │   ├── layout.tsx                        # Root layout
 │   └── page.tsx                          # Home — Teacher / Student selector
 ├── lib/
-│   └── prisma.ts                         # Prisma client singleton (with PrismaPg adapter)
+│   ├── prisma.ts                         # Prisma client singleton (with PrismaPg adapter)
+│   └── liveStore.ts                      # Shared in-memory Maps for Socket.io state
 ├── prisma/
 │   ├── schema.prisma                     # DB schema (Teacher, Room, Student)
 │   └── migrations/                       # Migration history
@@ -142,6 +163,14 @@ classroom-mic/
 7. When teacher unmutes you → your mic activates automatically
 8. Speak your doubt → teacher hears it in real-time
 
+### Admin Flow
+1. Go to `/admin` → Login with `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `.env`
+2. **Dashboard** — see total teachers, rooms, and students at a glance
+3. **Teachers** — view all registered teachers, their room count, delete if needed
+4. **Rooms** — view all rooms with token, teacher info, student count, delete
+5. **Students** — search by name / roll number / room, delete individual records
+6. **Live Monitor** — see which rooms have active Socket.io connections, which students are currently online (auto-refreshes every 5 seconds)
+
 ---
 
 ## 🔌 Socket.io Events
@@ -151,10 +180,11 @@ classroom-mic/
 | `teacher-join` | Client → Server | `roomToken` | Teacher subscribes to room |
 | `student-join` | Client → Server | `{ roomToken, rollNumber }` | Student subscribes to room |
 | `toggle-mic` | Teacher → Server | `{ roomToken, rollNumber, micOn }` | Teacher toggles student mic |
-| `mic-control` | Server → All in room | `{ rollNumber, micOn }` | Broadcast mic state change |
+| `mic-control` | Server → Student | `{ rollNumber, micOn }` | Mic state change for specific student |
 | `webrtc-offer` | Student → Server | `{ offer, rollNumber, roomToken }` | WebRTC offer from student |
 | `webrtc-answer` | Teacher → Server | `{ answer, roomToken }` | WebRTC answer from teacher |
 | `webrtc-ice` | Both → Server | `{ candidate, roomToken }` | ICE candidate exchange |
+| `initiate-connection` | Server → Student | `{ roomToken }` | Trigger WebRTC when teacher is ready |
 
 ---
 
@@ -185,6 +215,8 @@ Edit `.env`:
 DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
 NEXTAUTH_SECRET="your-32-char-random-secret"
 NEXTAUTH_URL="http://localhost:3000"
+ADMIN_EMAIL="admin@yourdomain.com"
+ADMIN_PASSWORD="yourStrongPassword"
 ```
 
 Generate a secret:
@@ -213,6 +245,7 @@ pnpm dev
 ```
 
 App runs at `http://localhost:3000`
+Admin panel at `http://localhost:3000/admin`
 
 ---
 
@@ -238,7 +271,7 @@ pnpm install
 
 ```bash
 nano .env
-# Add DATABASE_URL, NEXTAUTH_SECRET, NEXTAUTH_URL (your domain)
+# Add DATABASE_URL, NEXTAUTH_SECRET, NEXTAUTH_URL, ADMIN_EMAIL, ADMIN_PASSWORD
 ```
 
 ### 4. Build and start with PM2
@@ -279,6 +312,8 @@ server {
 | `DATABASE_URL` | Neon PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
 | `NEXTAUTH_SECRET` | Random 32-char string for session signing | `openssl rand -base64 32` |
 | `NEXTAUTH_URL` | Full URL where the app is hosted | `https://yourdomain.com` |
+| `ADMIN_EMAIL` | Admin panel login email | `admin@yourdomain.com` |
+| `ADMIN_PASSWORD` | Admin panel login password | `yourStrongPassword` |
 
 ---
 
@@ -308,6 +343,8 @@ server {
 - **Vercel is not supported** for deployment because it uses serverless functions which do not support persistent WebSocket connections. Use a VPS (Hostinger, DigitalOcean, Railway, Render) instead.
 - **Prisma v7** requires the `@prisma/adapter-pg` driver adapter — direct `datasourceUrl` in the constructor is not supported.
 - **NEXTAUTH_URL** must match the exact URL where the app runs, including protocol (`https://` in production).
+- **Admin panel** uses a simple HTTP-only cookie session — no DB dependency for admin auth. Credentials are set via `.env` only.
+- **Live Monitor** tracks in-memory Socket.io state via `lib/liveStore.ts` — data resets on server restart, which is expected behavior.
 
 ---
 
