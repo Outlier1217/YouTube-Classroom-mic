@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "./globals.css";
 import Providers from "./providers";
 
@@ -32,6 +33,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
         <script src="/register-sw.js" async />
+        <Script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9789619932046904"
+          crossOrigin="anonymous"
+          strategy="afterInteractive"
+        />
       </head>
       <body>
         <Providers>{children}</Providers>
