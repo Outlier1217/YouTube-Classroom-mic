@@ -27,7 +27,7 @@ export default function StudentPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [studentData, setStudentData] = useState<{
-    id: string; name: string; rollNumber: string; roomName: string
+    id: string; name: string; rollNumber: string; roomName: string;
   } | null>(null);
 
   useEffect(() => {
@@ -63,20 +63,70 @@ export default function StudentPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-950 flex items-center justify-center">
-      <div className="bg-gray-900 p-8 rounded-2xl w-full max-w-md flex flex-col gap-4">
-        <h2 className="text-2xl font-bold text-white text-center">🎓 Join Class</h2>
-        {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-        <input value={token} onChange={e => setToken(e.target.value)} placeholder="Paste class token" className="bg-gray-800 text-white px-4 py-3 rounded-lg outline-none" />
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="Your name" className="bg-gray-800 text-white px-4 py-3 rounded-lg outline-none" />
-        <button onClick={join} disabled={loading} className="bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-semibold transition disabled:opacity-50">
-          {loading ? "Joining..." : "Join Class"}
-        </button>
+    <div className="min-h-screen bg-[#0d1117] flex flex-col">
+      {/* Top Ad */}
+      <div className="w-full bg-[#111827] border-b border-[#1f2937] flex items-center justify-center py-2 min-h-[60px]">
+        <span className="text-[#374151] text-xs font-mono">[ Advertisement ]</span>
       </div>
-    </main>
+
+      <main className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <a href="/" className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-300 text-sm mb-6 transition">
+            ← Back to home
+          </a>
+
+          <div className="bg-[#111827] border border-[#1f2937] rounded-2xl p-8 flex flex-col gap-5">
+            <div>
+              <h2 className="text-xl font-bold text-white">🎓 Join Class</h2>
+              <p className="text-gray-500 text-sm mt-1">Paste the token shared by your teacher</p>
+            </div>
+
+            {error && (
+              <div className="bg-red-950/50 border border-red-900 rounded-lg px-4 py-2.5">
+                <p className="text-red-400 text-sm">{error}</p>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3">
+              <input
+                value={token} onChange={(e) => setToken(e.target.value)}
+                placeholder="Class token (e.g. abc123xyz)"
+                className="bg-[#0d1117] border border-[#1f2937] focus:border-emerald-600 text-white placeholder-gray-600 px-4 py-3 rounded-xl outline-none text-sm transition font-mono"
+              />
+              <input
+                value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && join()}
+                placeholder="Your full name"
+                className="bg-[#0d1117] border border-[#1f2937] focus:border-emerald-600 text-white placeholder-gray-600 px-4 py-3 rounded-xl outline-none text-sm transition"
+              />
+            </div>
+
+            <button
+              onClick={join} disabled={loading}
+              className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 disabled:opacity-50 text-white py-3 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2"
+            >
+              {loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {loading ? "Joining..." : "Join Class →"}
+            </button>
+          </div>
+
+          <div className="mt-4 bg-[#111827] border border-[#1f2937] rounded-xl p-4">
+            <p className="text-gray-500 text-xs leading-relaxed">
+              <span className="text-gray-400 font-semibold">💡 Tip:</span> After joining, keep this tab open in the background while watching YouTube. Your teacher can unmute you at any time.
+            </p>
+          </div>
+        </div>
+      </main>
+
+      {/* Bottom Ad Banner */}
+      <div className="w-full bg-[#111827] border-t border-[#1f2937] flex items-center justify-center py-3 min-h-[70px]">
+        <span className="text-[#374151] text-xs font-mono">[ Advertisement ]</span>
+      </div>
+    </div>
   );
 }
 
+// ---- StudentMicView — same as before, just UI improved ----
 function StudentMicView({ studentData, token }: {
   studentData: { id: string; name: string; rollNumber: string; roomName: string };
   token: string;
@@ -88,137 +138,60 @@ function StudentMicView({ studentData, token }: {
   const socketRef = useRef<Socket | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const micOnRef = useRef(false);
 
-  // Acquire mic once — while tab is visible
   useEffect(() => {
     navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       .then(stream => {
         streamRef.current = stream;
-        // Start muted
         stream.getAudioTracks().forEach(t => { t.enabled = false; });
         setConnStatus("ready");
-        console.log("Mic acquired");
       })
-      .catch(err => {
-        console.error("Mic error:", err);
-        setConnStatus("error");
-      });
-
-    return () => {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-    };
+      .catch(() => setConnStatus("error"));
+    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
   }, []);
 
   const createPeerAndOffer = async (socket: Socket) => {
-    if (!streamRef.current) { console.log("No stream yet"); return; }
-
-    // Close old peer
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-
-    console.log("Creating peer connection...");
+    if (!streamRef.current) return;
+    if (peerRef.current) { peerRef.current.close(); peerRef.current = null; }
     const peer = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
       ]
     });
     peerRef.current = peer;
-
-    // Add muted track
-    streamRef.current.getTracks().forEach(track => {
-      peer.addTrack(track, streamRef.current!);
-    });
-
+    streamRef.current.getTracks().forEach(track => peer.addTrack(track, streamRef.current!));
     peer.onicecandidate = (e) => {
-      if (e.candidate) {
-        socket.emit("webrtc-ice", {
-          candidate: e.candidate,
-          roomToken: token,
-          rollNumber: studentData.rollNumber,
-          from: "student",
-        });
-      }
+      if (e.candidate) socket.emit("webrtc-ice", { candidate: e.candidate, roomToken: token, rollNumber: studentData.rollNumber, from: "student" });
     };
-
     peer.onconnectionstatechange = () => {
-      console.log("Peer:", peer.connectionState);
-      if (peer.connectionState === "failed") {
-        // Retry after 3 seconds
-        setTimeout(() => createPeerAndOffer(socket), 3000);
-      }
+      if (peer.connectionState === "failed") setTimeout(() => createPeerAndOffer(socket), 3000);
     };
-
     try {
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      socket.emit("webrtc-offer", {
-        offer,
-        rollNumber: studentData.rollNumber,
-        roomToken: token,
-      });
-      console.log("Offer sent to teacher");
-    } catch (err) {
-      console.error("Offer failed:", err);
-    }
+      socket.emit("webrtc-offer", { offer, rollNumber: studentData.rollNumber, roomToken: token });
+    } catch (err) { console.error("Offer failed:", err); }
   };
 
   useEffect(() => {
-    const socket = io({
-      path: "/socket.io",
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-    });
+    const socket = io({ path: "/socket.io", reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 1000 });
     socketRef.current = socket;
-
-    socket.on("connect", () => {
-      console.log("Socket connected");
-      socket.emit("student-join", { roomToken: token, rollNumber: studentData.rollNumber });
-    });
-
-    // Server tells student to initiate WebRTC (teacher is ready)
-    socket.on("initiate-connection", () => {
-      console.log("Teacher ready — initiating WebRTC");
-      createPeerAndOffer(socket);
-    });
-
-    // Teacher toggles mic — ONLY track enable/disable, no new offer
+    socket.on("connect", () => socket.emit("student-join", { roomToken: token, rollNumber: studentData.rollNumber }));
+    socket.on("initiate-connection", () => createPeerAndOffer(socket));
     socket.on("mic-control", (data: { rollNumber: string; micOn: boolean }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-      console.log("Mic control:", data.micOn);
-      micOnRef.current = data.micOn;
-
-      if (streamRef.current) {
-        streamRef.current.getAudioTracks().forEach(t => {
-          t.enabled = data.micOn;
-        });
-      }
+      streamRef.current?.getAudioTracks().forEach(t => { t.enabled = data.micOn; });
       setMicStatus(data.micOn ? "on" : "off");
     });
-
     socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; rollNumber: string }) => {
       if (data.rollNumber !== studentData.rollNumber) return;
-      console.log("Got answer from teacher");
-      peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer))
-        .catch(console.error);
+      peerRef.current?.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(console.error);
     });
-
     socket.on("webrtc-ice", (data: { candidate: RTCIceCandidateInit; from: string }) => {
-      if (data.from === "teacher") {
-        peerRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate))
-          .catch(console.error);
-      }
+      if (data.from === "teacher") peerRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(console.error);
     });
-
-    return () => {
-      socket.disconnect();
-      peerRef.current?.close();
-    };
+    return () => { socket.disconnect(); peerRef.current?.close(); };
   }, [token, studentData.rollNumber]);
 
   const handleCopy = async () => {
@@ -226,62 +199,88 @@ function StudentMicView({ studentData, token }: {
     if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2000); }
   };
 
-  const handleLeave = () => {
-    localStorage.removeItem("classroom_student");
-    window.location.reload();
-  };
-
   return (
-    <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center gap-6 p-6">
-      <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-md text-center">
-        <h2 className="text-2xl font-bold text-white mb-2">✅ Joined: {studentData.roomName}</h2>
-        <p className="text-gray-400 mb-1">Name: <span className="text-white font-semibold">{studentData.name}</span></p>
-
-        <div className="bg-gray-800 rounded-xl p-4 my-4">
-          <p className="text-gray-400 text-sm mb-1">Your Roll Number</p>
-          <p className="text-green-400 text-3xl font-mono font-bold">{studentData.rollNumber}</p>
-        </div>
-
-        <p className="text-yellow-400 text-sm">📋 Copy this roll number and paste it in YouTube live chat to raise a doubt</p>
-        <button onClick={handleCopy} className="mt-4 bg-green-700 hover:bg-green-600 text-white px-6 py-2 rounded-lg text-sm transition font-semibold">
-          {copied ? "✅ Copied!" : "📋 Copy Roll Number"}
-        </button>
-
-        <div className="mt-6 bg-gray-800 rounded-xl p-4">
-          <p className="text-gray-400 text-sm">🎙️ Mic Status</p>
-          {connStatus === "error" ? (
-            <p className="text-red-400 font-semibold mt-1">❌ Mic access denied — please refresh and allow</p>
-          ) : connStatus === "connecting" ? (
-            <p className="text-yellow-400 font-semibold mt-1">⏳ Setting up mic...</p>
-          ) : micStatus === "off" ? (
-            <p className="text-red-400 font-semibold mt-1">🔇 Muted — Teacher will unmute when needed</p>
-          ) : (
-            <p className="text-green-400 font-semibold mt-1 animate-pulse">🎙️ Live — Teacher can hear you</p>
-          )}
-          <p className="text-gray-500 text-xs mt-2">Keep this tab open in background while watching YouTube</p>
-        </div>
-
-        {connStatus === "ready" && (
-          <div className="mt-3 flex items-center justify-center gap-2">
-            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-            <span className="text-green-500 text-xs">Mic ready — switch tabs freely</span>
-          </div>
-        )}
-
-        <div className="mt-4 bg-blue-900/30 border border-blue-700/50 rounded-xl p-3 text-left">
-          <p className="text-blue-400 text-xs font-semibold mb-1">💡 How to use</p>
-          <p className="text-blue-200/70 text-xs">
-            1. Allow mic permission ✅<br />
-            2. Open YouTube in <strong>another tab</strong><br />
-            3. Raise doubt with your roll number in chat<br />
-            4. Speak when teacher unmutes — <strong>no tab switching needed</strong>
-          </p>
-        </div>
-
-        <button onClick={handleLeave} className="mt-4 text-gray-500 hover:text-red-400 text-xs transition">
-          Leave class & join with different name
-        </button>
+    <div className="min-h-screen bg-[#0d1117] flex flex-col">
+      {/* Top Ad */}
+      <div className="w-full bg-[#111827] border-b border-[#1f2937] flex items-center justify-center py-2 min-h-[60px]">
+        <span className="text-[#374151] text-xs font-mono">[ Advertisement ]</span>
       </div>
-    </main>
+
+      <main className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md flex flex-col gap-4">
+          {/* Room info */}
+          <div className="bg-[#111827] border border-[#1f2937] rounded-2xl p-6 text-center">
+            <p className="text-emerald-400 text-xs font-semibold uppercase tracking-wider mb-1">✅ Joined</p>
+            <h2 className="text-white text-lg font-bold">{studentData.roomName}</h2>
+            <p className="text-gray-500 text-sm mt-1">Welcome, <span className="text-gray-300">{studentData.name}</span></p>
+          </div>
+
+          {/* Roll number */}
+          <div className="bg-[#111827] border border-[#064e3b] rounded-2xl p-5">
+            <p className="text-gray-500 text-xs mb-2">Your Roll Number</p>
+            <p className="text-emerald-400 text-4xl font-mono font-bold mb-3">{studentData.rollNumber}</p>
+            <p className="text-yellow-500 text-xs mb-3">📋 Copy and paste this in YouTube live chat when you have a doubt</p>
+            <button
+              onClick={handleCopy}
+              className="w-full bg-emerald-700 hover:bg-emerald-600 active:scale-95 text-white py-2.5 rounded-xl text-sm font-semibold transition-all"
+            >
+              {copied ? "✅ Copied!" : "📋 Copy Roll Number"}
+            </button>
+          </div>
+
+          {/* Mic status */}
+          <div className="bg-[#111827] border border-[#1f2937] rounded-2xl p-5">
+            <p className="text-gray-500 text-xs mb-3">🎙️ Mic Status</p>
+            {connStatus === "error" ? (
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
+                <p className="text-red-400 text-sm font-medium">Mic access denied — refresh and allow</p>
+              </div>
+            ) : connStatus === "connecting" ? (
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500 shrink-0 animate-pulse" />
+                <p className="text-yellow-400 text-sm font-medium">Setting up mic...</p>
+              </div>
+            ) : micStatus === "off" ? (
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-gray-500 shrink-0" />
+                <p className="text-gray-400 text-sm">Muted — teacher will unmute when needed</p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+                <p className="text-emerald-400 text-sm font-semibold">Live — teacher can hear you</p>
+              </div>
+            )}
+            {connStatus === "ready" && (
+              <p className="text-gray-600 text-xs mt-2">Keep this tab open — switch to YouTube freely</p>
+            )}
+          </div>
+
+          {/* Steps */}
+          <div className="bg-[#111827] border border-[#1f2937] rounded-xl p-4">
+            <p className="text-blue-400 text-xs font-semibold mb-2">💡 How to raise a doubt</p>
+            <ol className="text-gray-500 text-xs space-y-1 list-none">
+              <li>1. Allow mic permission above ✅</li>
+              <li>2. Open YouTube in <strong className="text-gray-400">another tab</strong></li>
+              <li>3. Post your roll number in live chat</li>
+              <li>4. Speak when teacher unmutes — no tab switch needed</li>
+            </ol>
+          </div>
+
+          <button
+            onClick={() => { localStorage.removeItem("classroom_student"); window.location.reload(); }}
+            className="text-gray-600 hover:text-red-400 text-xs text-center transition"
+          >
+            Leave class & join with different name
+          </button>
+        </div>
+      </main>
+
+      {/* Bottom Ad */}
+      <div className="w-full bg-[#111827] border-t border-[#1f2937] flex items-center justify-center py-3 min-h-[70px]">
+        <span className="text-[#374151] text-xs font-mono">[ Advertisement ]</span>
+      </div>
+    </div>
   );
 }
