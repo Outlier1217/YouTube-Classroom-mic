@@ -1,5 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
+import DeveloperCredit from "./components/DeveloperCredit";
 
 export default function Home() {
   const router = useRouter();
@@ -75,12 +76,13 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="bg-[#111827] border-t border-[#1f2937] py-3 px-6 flex items-center justify-between">
-        <p className="text-gray-600 text-xs">© 2025 Outlier Lab</p>
+        <p className="text-gray-600 text-xs">© 2026 Outlier Lab</p>
         <a href="https://youtube.com/@Outlier-lab" target="_blank" rel="noopener noreferrer"
           className="text-gray-600 hover:text-gray-400 text-xs transition">
           YouTube →
         </a>
       </footer>
+      <DeveloperCredit />
     </div>
   );
 }

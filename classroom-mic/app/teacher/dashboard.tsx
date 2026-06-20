@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { io, Socket } from "socket.io-client";
+import DeveloperCredit from "../components/DeveloperCredit";
 
 interface Student { id: string; name: string; rollNumber: string; }
 interface Room { id: string; name: string; token: string; students: Student[]; }
@@ -396,6 +397,7 @@ export default function TeacherDashboard() {
           YouTube →
         </a>
       </footer>
+      <DeveloperCredit />
     </div>
   );
 }

@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { signIn, useSession } from "next-auth/react";
 import TeacherDashboard from "./dashboard";
+import DeveloperCredit from "../components/DeveloperCredit";
 
 export default function TeacherPage() {
   const { data: session, status } = useSession();
@@ -136,6 +137,7 @@ export default function TeacherPage() {
           </div>
         </aside>
       </div>
+      <DeveloperCredit />
     </div>
   );
 }

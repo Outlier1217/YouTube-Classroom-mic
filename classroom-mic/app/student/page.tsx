@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
+import DeveloperCredit from "../components/DeveloperCredit";
 
 function getBrowserId(): string {
   let id = localStorage.getItem("classroom_browser_id");
@@ -122,6 +123,7 @@ export default function StudentPage() {
       <div className="w-full bg-[#111827] border-t border-[#1f2937] flex items-center justify-center py-3 min-h-[70px]">
         <span className="text-[#374151] text-xs font-mono">[ Advertisement ]</span>
       </div>
+      <DeveloperCredit />
     </div>
   );
 }
@@ -281,6 +283,7 @@ function StudentMicView({ studentData, token }: {
       <div className="w-full bg-[#111827] border-t border-[#1f2937] flex items-center justify-center py-3 min-h-[70px]">
         <span className="text-[#374151] text-xs font-mono">[ Advertisement ]</span>
       </div>
+      <DeveloperCredit />
     </div>
   );
 }
