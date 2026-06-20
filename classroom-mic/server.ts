@@ -2,6 +2,7 @@ import { createServer } from "http";
 import { parse } from "url";
 import next from "next";
 import { Server } from "socket.io";
+import { teacherSockets, studentPeers } from "./lib/liveStore"; // ← ADD
 
 const dev = process.env.NODE_ENV !== "production";
 const app = next({ dev });
@@ -19,9 +20,9 @@ app.prepare().then(() => {
     pingInterval: 25000,
   });
 
-  const teacherSockets = new Map<string, string>();
-  // Track which students have active peer connections
-  const studentPeers = new Map<string, string>(); // rollNumber -> socketId
+  // ← REMOVE these two lines (ab liveStore se aa raha hai)
+  // const teacherSockets = new Map<string, string>();
+  // const studentPeers = new Map<string, string>();
 
   io.on("connection", (socket) => {
     console.log("Connected:", socket.id);
@@ -30,8 +31,6 @@ app.prepare().then(() => {
       socket.join(`room:${roomToken}`);
       teacherSockets.set(roomToken, socket.id);
       console.log(`Teacher ${socket.id} joined room:${roomToken}`);
-      
-      // Tell all students in room to initiate connection
       socket.to(`room:${roomToken}`).emit("initiate-connection", { roomToken });
     });
 
@@ -39,10 +38,9 @@ app.prepare().then(() => {
       socket.join(`room:${data.roomToken}`);
       socket.data.rollNumber = data.rollNumber;
       socket.data.roomToken = data.roomToken;
-      studentPeers.set(data.rollNumber, socket.id);
+      // ← CHANGE: object store karo sirf string nahi
+      studentPeers.set(data.rollNumber, { socketId: socket.id, roomToken: data.roomToken });
       console.log(`Student ${data.rollNumber} joined room:${data.roomToken}`);
-
-      // If teacher already in room, tell this student to initiate connection
       if (teacherSockets.has(data.roomToken)) {
         socket.emit("initiate-connection", { roomToken: data.roomToken });
       }
@@ -50,10 +48,9 @@ app.prepare().then(() => {
 
     socket.on("toggle-mic", (data: { roomToken: string; rollNumber: string; micOn: boolean }) => {
       console.log(`Mic toggle: ${data.rollNumber} -> ${data.micOn}`);
-      // Send only to that specific student
-      const studentSocketId = studentPeers.get(data.rollNumber);
-      if (studentSocketId) {
-        io.to(studentSocketId).emit("mic-control", {
+      const peer = studentPeers.get(data.rollNumber);
+      if (peer) {
+        io.to(peer.socketId).emit("mic-control", {
           rollNumber: data.rollNumber,
           micOn: data.micOn,
         });
@@ -70,9 +67,9 @@ app.prepare().then(() => {
 
     socket.on("webrtc-answer", (data: { answer: RTCSessionDescriptionInit; roomToken: string; rollNumber: string }) => {
       console.log(`WebRTC answer for ${data.rollNumber}`);
-      const studentSocketId = studentPeers.get(data.rollNumber);
-      if (studentSocketId) {
-        io.to(studentSocketId).emit("webrtc-answer", {
+      const peer = studentPeers.get(data.rollNumber);
+      if (peer) {
+        io.to(peer.socketId).emit("webrtc-answer", {
           answer: data.answer,
           rollNumber: data.rollNumber,
         });
@@ -84,8 +81,8 @@ app.prepare().then(() => {
         const teacherSocketId = teacherSockets.get(data.roomToken);
         if (teacherSocketId) io.to(teacherSocketId).emit("webrtc-ice", data);
       } else {
-        const studentSocketId = studentPeers.get(data.rollNumber);
-        if (studentSocketId) io.to(studentSocketId).emit("webrtc-ice", data);
+        const peer = studentPeers.get(data.rollNumber);
+        if (peer) io.to(peer.socketId).emit("webrtc-ice", data);
       }
     });
 
@@ -93,8 +90,8 @@ app.prepare().then(() => {
       teacherSockets.forEach((socketId, token) => {
         if (socketId === socket.id) teacherSockets.delete(token);
       });
-      studentPeers.forEach((socketId, rollNumber) => {
-        if (socketId === socket.id) studentPeers.delete(rollNumber);
+      studentPeers.forEach((data, rollNumber) => {
+        if (data.socketId === socket.id) studentPeers.delete(rollNumber);
       });
       console.log("Disconnected:", socket.id);
     });
